@@ -1,11 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
+
+TimeOfDay selectedTime = TimeOfDay.now();
 
 // Model class for the data
 class Data {
-  final String name;
-  final int number;
+  static int idCounter = 0;
 
-  Data({required this.name, required this.number});
+  final int id = idCounter++;
+  final DateTime dateTime;
+  final int fuelAmount;
+  final double odometerStart;
+  final double odometerEnd;
+  final int pricePerLitre;
+  final String notes;
+
+  Data({required this.dateTime, required this.fuelAmount, required this.odometerStart,
+    required this.odometerEnd, required this.pricePerLitre, required this.notes});
 }
 
 // Static DataStorage class to hold the data
@@ -20,15 +32,15 @@ class DataStorage {
     return dataList;
   }
 
-  static Data? findByName(String name) {
+  static Data? findByID(int id) {
     return dataList.firstWhere(
-          (data) => data.name == name,
-      orElse: () => Data(name: '', number: 0),
+      (data) => data.id == id,
+      orElse: () => Data(dateTime: DateTime.now(), fuelAmount: 0, pricePerLitre: 0, odometerStart: 0.0, odometerEnd: 0.0, notes: ""),
     );
   }
 
-  static void removeByName(String name) {
-    dataList.removeWhere((data) => data.name == name);
+  static void removeById(int id) {
+    dataList.removeWhere((data) => data.id == id);
   }
 }
 
@@ -56,8 +68,11 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   // Controllers for the form
-  final TextEditingController nameController = TextEditingController();
-  final TextEditingController numberController = TextEditingController();
+  final TextEditingController odometerStart = TextEditingController();
+  final TextEditingController odometerEnd = TextEditingController();
+  final TextEditingController fuelAmount = TextEditingController();
+  final TextEditingController pricePerLitre = TextEditingController();
+  final TextEditingController notes = TextEditingController();
 
   // Key for the form validation
   final formKey = GlobalKey<FormState>();
@@ -65,15 +80,20 @@ class _HomePageState extends State<HomePage> {
   // Function to handle form submission and data addition
   void submitForm() {
     if (formKey.currentState?.validate() ?? false) {
-      String name = nameController.text;
-      int number = int.tryParse(numberController.text) ?? 0;
 
-      // Add data to storage
-      DataStorage.add(Data(name: name, number: number));
+      DataStorage.add(Data(dateTime: _DatePickerState.selectedDate ?? DateTime.now(),
+      fuelAmount: int.tryParse(fuelAmount.text) ?? 0,
+      odometerStart: double.tryParse(odometerStart.text) ?? 0.0,
+      odometerEnd: double.tryParse(odometerEnd.text) ?? 0.0,
+      pricePerLitre: int.tryParse(pricePerLitre.text) ?? 0,
+      notes: notes.text));
 
       // Clear the input fields
-      nameController.clear();
-      numberController.clear();
+      odometerStart.clear();
+      odometerEnd.clear();
+      fuelAmount.clear();
+      pricePerLitre.clear();
+      notes.clear();
 
       // Update the UI
       setState(() {});
@@ -91,8 +111,11 @@ class _HomePageState extends State<HomePage> {
             padding: const EdgeInsets.all(16.0),
             child: MyForm(
               formKey: formKey,
-              nameController: nameController,
-              numberController: numberController,
+              vehicleOdometerStart: odometerStart,
+              vehicleOdometerEnd: odometerEnd,
+              fuelAmount: fuelAmount,
+              pricePerLitre: pricePerLitre,
+              notes: notes,
               submitForm: submitForm,
             ),
           ),
@@ -102,14 +125,15 @@ class _HomePageState extends State<HomePage> {
               itemCount: DataStorage.getAll().length,
               itemBuilder: (context, index) {
                 final data = DataStorage.getAll()[index];
+                final consumption = calculateFuelConsumption(data);
                 return ListTile(
-                  title: Text(data.name),
-                  subtitle: Text('Number: ${data.number}'),
+                  title: Text(DateFormat('yyyy-MM-dd').format(data.dateTime)),
+                  subtitle: Text('Consumption: $consumption litres/100km'),
                   trailing: IconButton(
                     icon: Icon(Icons.delete),
                     onPressed: () {
                       // Remove the data from the list
-                      DataStorage.removeByName(data.name);
+                      DataStorage.removeById(data.id);
                       setState(() {});
                     },
                   ),
@@ -121,18 +145,39 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+
+  String calculateFuelConsumption(Data data) {
+    double distance = data.odometerEnd - data.odometerStart;
+
+    if (distance <= 0) {
+      return "0.0";
+    }
+
+    return format((data.fuelAmount / distance) * 100);
+  }
+
+  String format(double n) {
+    return n.toStringAsFixed(n.truncateToDouble() == n ? 0 : 2);
+  }
 }
 
 class MyForm extends StatelessWidget {
   final GlobalKey<FormState> formKey;
-  final TextEditingController nameController;
-  final TextEditingController numberController;
+  final TextEditingController vehicleOdometerStart;
+  final TextEditingController vehicleOdometerEnd;
+  final TextEditingController fuelAmount;
+  final TextEditingController pricePerLitre;
+  final TextEditingController notes;
   final VoidCallback submitForm;
 
-  const MyForm({super.key,
+  const MyForm({
+    super.key,
     required this.formKey,
-    required this.nameController,
-    required this.numberController,
+    required this.vehicleOdometerStart,
+    required this.vehicleOdometerEnd,
+    required this.fuelAmount,
+    required this.pricePerLitre,
+    required this.notes,
     required this.submitForm,
   });
 
@@ -143,18 +188,50 @@ class MyForm extends StatelessWidget {
       child: Column(
         children: [
           TextFormField(
-            controller: nameController,
-            decoration: InputDecoration(labelText: 'Name'),
+            controller: vehicleOdometerStart,
+            decoration: InputDecoration(labelText: 'Odometer start'),
+            keyboardType: TextInputType.number,
+            inputFormatters: <TextInputFormatter>[
+              FilteringTextInputFormatter.allow(RegExp(r'^\d+(\.\d+)?$')),
+            ],
             validator: (value) {
               if (value == null || value.isEmpty) {
-                return 'Please enter a name';
+                return 'Please enter a number';
               }
               return null;
             },
           ),
           TextFormField(
-            controller: numberController,
-            decoration: InputDecoration(labelText: 'Number'),
+            controller: vehicleOdometerEnd,
+            decoration: InputDecoration(labelText: 'Odometer end'),
+            keyboardType: TextInputType.number,
+            inputFormatters: <TextInputFormatter>[
+              FilteringTextInputFormatter.allow(RegExp(r'^\d+(\.\d+)?$')),
+            ],
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'Please enter a number';
+              }
+              return null;
+            },
+          ),
+          TextFormField(
+            controller: fuelAmount,
+            decoration: InputDecoration(labelText: 'Fuel amount'),
+            keyboardType: TextInputType.number,
+            inputFormatters: <TextInputFormatter>[
+              FilteringTextInputFormatter.allow(RegExp('[0-9]')),
+            ],
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'Please enter a number';
+              }
+              return null;
+            },
+          ),
+          TextFormField(
+            controller: pricePerLitre,
+            decoration: InputDecoration(labelText: 'price/litre'),
             keyboardType: TextInputType.number,
             validator: (value) {
               if (value == null || value.isEmpty) {
@@ -163,8 +240,16 @@ class MyForm extends StatelessWidget {
               return null;
             },
           ),
+          TextFormField(
+            controller: notes,
+            decoration: InputDecoration(labelText: 'Notes'),
+            keyboardType: TextInputType.text,
+          ),
+
+          Padding(padding: EdgeInsets.symmetric(vertical: 25.0)),
+          const DatePicker(),
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16.0),
+            padding: EdgeInsets.symmetric(vertical: 16.0),
             child: ElevatedButton(
               onPressed: submitForm,
               child: Text('Submit'),
@@ -173,5 +258,44 @@ class MyForm extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class DatePicker extends StatefulWidget {
+  const DatePicker({super.key});
+
+  @override
+  State<DatePicker> createState() => _DatePickerState();
+}
+
+class _DatePickerState extends State<DatePicker> {
+  static DateTime? selectedDate;
+
+  Future<void> _selectDate() async {
+    final DateTime? pickedDate = await showDatePicker(
+      context: context,
+      initialDate: DateTime(2021, 7, 25),
+      firstDate: DateTime(2021),
+      lastDate: DateTime(2022),
+    );
+
+    setState(() {
+      selectedDate = pickedDate;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+        mainAxisSize: MainAxisSize.min,
+        spacing: 10,
+        children: <Widget>[
+          Text("Refuel date"),
+          ElevatedButton(
+              onPressed: _selectDate,
+              child: Text(selectedDate != null
+                  ? '${selectedDate!.day}/${selectedDate!.month}/${selectedDate!.year}'
+                  : 'No date selected')),
+        ]);
   }
 }
